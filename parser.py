@@ -41,13 +41,8 @@ def parse_null(data: bytes) -> tuple[JSONNode, bytes]:
 
 
 # This works due to a nice property of UTF-8: no code point's UTF-8 representation contains '\x22', except '\x22' == '"' itself.
-_STRING_RE: Final[re.Pattern[bytes]] = re.compile(rb'\A"(:?[^"\\]|\\.)*"')
+_STRING_RE: Final[re.Pattern[bytes]] = re.compile(rb'\A"(:?[^"\\]|\\.)*"' + b"|" + rb"\A\'(:?[^'\\]|\\.)*\'")
 def parse_string(data: bytes) -> tuple[JSONNode, bytes]:
-    """ Parse a JSON string. This function will raise a ValueError on two conditions:
-        1. The the input does not begin with " or '.
-        2. There is exactly 1 " or ' in the input that is not preceded by a single backslash.
-        3. 
-        """
     consumed, remaining = _parse_with_pattern(data, _STRING_RE)
     return (JSONNode(JSONType.String, consumed), remaining)
 
