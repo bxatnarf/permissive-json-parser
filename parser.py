@@ -12,7 +12,7 @@ class JSONType(Enum):
     Bool = 3
     List = 4
     Object = 5
-
+    SINGLQ_QUOTE_STRING = 6
 
 
 @dataclass
@@ -28,7 +28,7 @@ def _parse_with_pattern(data: bytes, pattern: re.Pattern[bytes]) -> tuple[bytes,
     return (data[m.start():m.end()], data[m.end():])
 
 
-_NUMBER_RE: Final[re.Pattern[bytes]] = re.compile(rb"\A[0-9_\.e+\-]+")
+_NUMBER_RE: Final[re.Pattern[bytes]] = re.compile(rb"\A[0-9_\.eE+\-]+")
 def parse_number(data: bytes) -> tuple[JSONNode, bytes]:
     consumed, remaining = _parse_with_pattern(data, _NUMBER_RE)
     return (JSONNode(JSONType.Number, consumed), remaining)
@@ -41,10 +41,26 @@ def parse_null(data: bytes) -> tuple[JSONNode, bytes]:
 
 
 # This works due to a nice property of UTF-8: no code point's UTF-8 representation contains '\x22', except '\x22' == '"' itself.
-_STRING_RE: Final[re.Pattern[bytes]] = re.compile(rb'\A"(:?[^"\\]|\\.)*"' + b"|" + rb"\A\'(:?[^'\\]|\\.)*\'")
+_STRING_RE: Final[re.Pattern[bytes]] = re.compile(rb'\A"(:?[^"\\]|\\.)*"')
 def parse_string(data: bytes) -> tuple[JSONNode, bytes]:
+    """ Parse a JSON string. This function will raise a ValueError on two conditions:
+        1. The the input does not begin with " or '.
+        2. There is exactly 1 " or ' in the input that is not preceded by a single backslash.
+        3.
+        """
     consumed, remaining = _parse_with_pattern(data, _STRING_RE)
     return (JSONNode(JSONType.String, consumed), remaining)
+
+# This works due to a nice property of UTF-8: no code point's UTF-8 representation contains '\x22', except '\x22' == '"' itself.
+_SINGLQ_QUOTE_STRING_RE: Final[re.Pattern[bytes]] = re.compile(rb"\A'(:?[^'\\]|\\.)*'")
+def parse_singlq_quote_string(data: bytes) -> tuple[JSONNode, bytes]:
+    """ Parse a JSON string. This function will raise a ValueError on two conditions:
+        1. The the input does not begin with " or '.
+        2. There is exactly 1 " or ' in the input that is not preceded by a single backslash.
+        3.
+        """
+    consumed, remaining = _parse_with_pattern(data, _SINGLQ_QUOTE_STRING_RE)
+    return (JSONNode(JSONType.SINGLQ_QUOTE_STRING, consumed), remaining)
 
 
 _BOOL_RE: Final[re.Pattern[bytes]] = re.compile(rb"\A[Tt][Rr][Uu][Ee]|[Ff][Aa][Ll][Ss][Ee]")
@@ -89,7 +105,7 @@ def consume_colon(data: bytes) -> bytes:
 
 
 def parse_expression(data: bytes) -> tuple[JSONNode, bytes]:
-    for f in (parse_number, parse_null, parse_string, parse_bool, parse_list, parse_object):
+    for f in (parse_number, parse_null, parse_string, parse_bool, parse_list, parse_object, parse_singlq_quote_string):
         try:
             return f(data)
         except ValueError:
@@ -101,9 +117,13 @@ def parse_list(data: bytes) -> tuple[JSONNode, bytes]:
     data = consume_open_bracket(data)
 
     result: list[JSONNode] = []
+    last_len = None
     while True:
         data = consume_whitespace(data)
-
+        length = len(data)
+        if last_len == length:
+            break
+        last_len = length
         try:
             item, data = parse_expression(data)
             result.append(item)
@@ -111,7 +131,7 @@ def parse_list(data: bytes) -> tuple[JSONNode, bytes]:
             pass
 
         data = consume_whitespace(data)
-        
+
         try:
             data = consume_comma(data)
         except ValueError:
@@ -125,16 +145,22 @@ def parse_list(data: bytes) -> tuple[JSONNode, bytes]:
         except ValueError:
             pass
 
+
+
     return (JSONNode(JSONType.List, result), data)
 
 
 def parse_object(data: bytes) -> tuple[JSONNode, bytes]:
     data = consume_open_curly(data)
-
+    last_len = None
     result: list[list[JSONNode]] = []
     while True:
         # Eat values separated by colons until there's no colon
         kvp: list[JSONNode] = []
+        length = len(data)
+        if last_len == length:
+            break
+        last_len = length
         while True:
             data = consume_whitespace(data)
             item, data = parse_expression(data)
@@ -144,9 +170,14 @@ def parse_object(data: bytes) -> tuple[JSONNode, bytes]:
                 data = consume_colon(data)
             except:
                 break
+            length = len(data)
+            if last_len == length:
+                break
+            last_len = length
+
         if len(kvp) > 0:
             result.append(kvp)
-        
+
         # Optionally eat a comma
         try:
             data = consume_comma(data)
@@ -160,6 +191,7 @@ def parse_object(data: bytes) -> tuple[JSONNode, bytes]:
             break
         except ValueError:
             pass
+
 
     return (JSONNode(JSONType.Object, result), data)
 
